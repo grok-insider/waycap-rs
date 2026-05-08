@@ -60,5 +60,14 @@ jobs:
           ${{ runner.os }}-cargo-clippy-
           ${{ runner.os }}-cargo-
           
-    - name: Run Clippy
-      run: cargo clippy --all-targets -- -D warnings
+    - name: Run Clippy (vaapi)
+      run: cargo clippy --all-targets --no-default-features --features vaapi -- -D warnings
+
+    - name: Run Clippy (nvidia + vulkan)
+      run: cargo clippy --all-targets --features "nvidia,vulkan" -- -D warnings
+
+    - name: Run Clippy (nvidia + egl)
+      run: cargo clippy --all-targets --features "nvidia,egl" -- -D warnings
+
+    - name: Run Clippy (vaapi + nvidia + vulkan)
+      run: cargo clippy --all-targets --features "vaapi,nvidia,vulkan" -- -D warnings

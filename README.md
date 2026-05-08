@@ -4,9 +4,9 @@ A high-level Wayland screen capture library with hardware-accelerated encoding f
 
 ## Features
 
-- **Hardware-accelerated video encoding** (Using VAAPI or NVENC)
+- **Hardware-accelerated video encoding** (VAAPI for Intel/AMD, NVENC for NVIDIA)
 - **Audio capture** with Opus encoding
-- **Copy-Free** video encoding leveraging pipewire's DMA Buffers
+- **Copy-Free** video encoding leveraging PipeWire's DMA Buffers
 - **Multiple quality presets** for various use cases
 - **Cursor visibility control**
 - **Simple, ergonomic API** for easy integration
@@ -25,9 +25,27 @@ Add this to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-waycap-rs = "1.0.0"
+# Default: VAAPI only (Intel/AMD)
+waycap-rs = "3.0.0"
 crossbeam = "0.8.4"
+
+# NVIDIA only
+waycap-rs = { version = "3.0.0", default-features = false, features = ["nvidia", "vulkan"] }
+
+# Support both, auto-detect GPU at runtime
+waycap-rs = { version = "3.0.0", features = ["nvidia", "vulkan"] }
 ```
+
+### Cargo Features
+
+| Feature  | Default | Description |
+|----------|---------|-------------|
+| `vaapi`  | yes     | Intel/AMD hardware encoding via VAAPI |
+| `nvidia` | no      | NVIDIA hardware encoding via NVENC/CUDA |
+| `vulkan` | no      | Vulkan interop for DMA-BUF (use with `nvidia`) |
+| `egl`    | no      | EGL/OpenGL interop alternative to `vulkan` (use with `nvidia`) |
+
+`vulkan` and `egl` are mutually exclusive. `nvidia` requires one of them.
 
 ## Example Usage
 ```rust
@@ -41,7 +59,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .with_audio()
         .with_quality_preset(QualityPreset::Medium)
         .with_cursor_shown()
-        .with_video_encoder(VideoEncoder::Vaapi)
+        .with_video_encoder(VideoEncoder::H264Vaapi)
         .with_audio_encoder(AudioEncoder::Opus)
         .build()?;
     
@@ -121,7 +139,14 @@ cargo build
 
 To run any of the examples, you can do so with
 ```bash
-cargo run --example example_name
+# Default (VAAPI — Intel/AMD)
+cargo run --example record_and_save
+
+# NVIDIA only
+cargo run --example record_and_save --features "nvidia,vulkan"
+
+# Both encoders, auto-detect GPU
+cargo run --example record_and_save --features "vaapi,nvidia,vulkan"
 ```
 
 Please run the examples before making a PR, to test and debug your changes.

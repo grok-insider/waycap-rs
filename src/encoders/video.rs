@@ -1,15 +1,20 @@
-use std::ffi::CString;
-use std::ptr::null_mut;
 use std::sync::Arc;
 use std::time::Duration;
+
+#[cfg(feature = "vaapi")]
+use std::ffi::CString;
+#[cfg(feature = "vaapi")]
+use std::ptr::null_mut;
 
 use crate::types::error::{Result, WaycapError};
 use crate::types::video_frame::RawVideoFrame;
 use crate::CaptureControls;
 use crossbeam::channel::Receiver;
 use crossbeam::select;
-use ffmpeg::ffi::{av_hwdevice_ctx_create, av_hwframe_ctx_alloc, AVBufferRef};
 use ffmpeg_next::{self as ffmpeg};
+use ffmpeg::ffi::{av_hwframe_ctx_alloc, AVBufferRef};
+#[cfg(feature = "vaapi")]
+use ffmpeg::ffi::av_hwdevice_ctx_create;
 use pipewire::spa;
 use std::sync::Mutex;
 
@@ -140,6 +145,7 @@ pub fn create_hw_frame_ctx(device: *mut AVBufferRef) -> Result<*mut AVBufferRef>
     }
 }
 
+#[cfg(feature = "vaapi")]
 pub fn create_hw_device(device_type: ffmpeg_next::ffi::AVHWDeviceType) -> Result<*mut AVBufferRef> {
     unsafe {
         let mut device: *mut AVBufferRef = null_mut();

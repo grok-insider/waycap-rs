@@ -1,9 +1,18 @@
 use crate::{
     encoders::video::{PipewireSPA, StartVideoEncoder},
-    types::{error::WaycapError, video_frame::RawVideoFrame},
-    waycap_egl::{EglContext, GpuVendor},
-    NvencEncoder, VaapiEncoder, VideoEncoder,
+    types::video_frame::RawVideoFrame,
+    VideoEncoder,
 };
+#[cfg(feature = "vaapi")]
+use crate::VaapiEncoder;
+#[cfg(feature = "nvidia")]
+use crate::NvencEncoder;
+#[cfg(all(feature = "vaapi", feature = "nvidia"))]
+use crate::types::error::WaycapError;
+#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "vulkan"))]
+use crate::waycap_vulkan::{detect_gpu_vendor, GpuVendor};
+#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "egl"))]
+use crate::waycap_egl::{detect_gpu_vendor, GpuVendor};
 use crossbeam::channel::Receiver;
 
 use crate::types::error::Result;
@@ -55,14 +64,20 @@ impl VideoEncoder for DmaBufEncoder {
 }
 
 impl PipewireSPA for DmaBufEncoder {
+    #[allow(unreachable_code)]
     fn get_spa_definition() -> Result<pipewire::spa::pod::Object> {
-        let dummy_context = EglContext::new(100, 100)?;
-        match dummy_context.get_gpu_vendor() {
+        #[cfg(all(feature = "vaapi", feature = "nvidia"))]
+        return match detect_gpu_vendor()? {
             GpuVendor::NVIDIA => NvencEncoder::get_spa_definition(),
             GpuVendor::AMD | GpuVendor::INTEL => VaapiEncoder::get_spa_definition(),
             GpuVendor::UNKNOWN => Err(WaycapError::Init(
                 "Unknown/Unimplemented GPU vendor".to_string(),
             )),
-        }
+        };
+        #[cfg(all(feature = "vaapi", not(feature = "nvidia")))]
+        return VaapiEncoder::get_spa_definition();
+        #[cfg(all(feature = "nvidia", not(feature = "vaapi")))]
+        return NvencEncoder::get_spa_definition();
+        unreachable!()
     }
 }

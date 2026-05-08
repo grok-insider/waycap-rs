@@ -77,17 +77,31 @@ use types::{
     video_frame::{EncodedVideoFrame, RawVideoFrame},
 };
 
+#[cfg(not(any(feature = "vaapi", feature = "nvidia")))]
+compile_error!("At least one encoder must be enabled: 'vaapi' or 'nvidia'.");
+
+#[cfg(all(feature = "vulkan", feature = "egl"))]
+compile_error!("Features 'vulkan' and 'egl' are mutually exclusive. Enable only one.");
+
+#[cfg(all(feature = "nvidia", not(any(feature = "vulkan", feature = "egl"))))]
+compile_error!("The 'nvidia' feature requires either 'vulkan' or 'egl' to also be enabled.");
+
 mod capture;
 mod encoders;
 pub mod pipeline;
 pub mod types;
 mod utils;
+#[cfg(all(feature = "nvidia", feature = "vulkan"))]
+mod waycap_vulkan;
+#[cfg(all(feature = "nvidia", feature = "egl"))]
 mod waycap_egl;
 
 pub use crate::encoders::dma_buf_encoder::DmaBufEncoder;
 pub use crate::encoders::dynamic_encoder::DynamicEncoder;
+#[cfg(feature = "nvidia")]
 pub use crate::encoders::nvenc_encoder::NvencEncoder;
 pub use crate::encoders::rgba_image_encoder::RgbaImageEncoder;
+#[cfg(feature = "vaapi")]
 pub use crate::encoders::vaapi_encoder::VaapiEncoder;
 pub use encoders::video::VideoEncoder;
 pub use utils::TIME_UNIT_NS;

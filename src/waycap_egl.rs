@@ -1,7 +1,9 @@
-use std::{
-    cell::Cell,
-    ffi::{c_void, CStr},
-};
+use std::cell::Cell;
+
+#[cfg(feature = "nvidia")]
+use std::ffi::c_void;
+#[cfg(feature = "vaapi")]
+use std::ffi::CStr;
 
 use khronos_egl::{self as egl, ClientBuffer, Dynamic, Instance};
 
@@ -13,6 +15,7 @@ type PFNGLEGLIMAGETARGETTEXTURE2DOESPROC =
 unsafe impl Sync for EglContext {}
 unsafe impl Send for EglContext {}
 
+#[cfg(feature = "vaapi")]
 #[derive(Clone, Copy)]
 #[allow(clippy::upper_case_acronyms)]
 pub enum GpuVendor {
@@ -22,6 +25,7 @@ pub enum GpuVendor {
     UNKNOWN,
 }
 
+#[cfg(feature = "vaapi")]
 impl From<&CStr> for GpuVendor {
     fn from(value: &CStr) -> Self {
         match value.to_str() {
@@ -55,6 +59,7 @@ pub struct EglContext {
     dmabuf_supported: bool,
     dmabuf_modifiers_supported: bool,
     persistent_texture_id: Cell<Option<u32>>,
+    #[cfg(feature = "vaapi")]
     gpu_vendor: GpuVendor,
     width: i32,
     height: i32,
@@ -136,6 +141,7 @@ impl EglContext {
         let (dmabuf_supported, dmabuf_modifiers_supported) =
             Self::check_dmabuf_support(&egl_instance, display).unwrap();
 
+        #[cfg(feature = "vaapi")]
         let gpu_vendor = get_gpu_vendor();
 
         Ok(Self {
@@ -147,6 +153,7 @@ impl EglContext {
             dmabuf_supported,
             dmabuf_modifiers_supported,
             persistent_texture_id: Cell::new(None),
+            #[cfg(feature = "vaapi")]
             gpu_vendor,
             width,
             height,
@@ -459,6 +466,7 @@ impl EglContext {
         self.persistent_texture_id.get()
     }
 
+    #[cfg(feature = "vaapi")]
     pub fn get_gpu_vendor(&self) -> GpuVendor {
         self.gpu_vendor
     }
@@ -484,6 +492,7 @@ impl Drop for EglContext {
     }
 }
 
+#[cfg(feature = "vaapi")]
 fn get_gpu_vendor() -> GpuVendor {
     unsafe {
         let vendor_ptr = gl::GetString(gl::VENDOR);
@@ -494,4 +503,10 @@ fn get_gpu_vendor() -> GpuVendor {
             GpuVendor::from(vendor)
         }
     }
+}
+
+#[cfg(feature = "vaapi")]
+pub fn detect_gpu_vendor() -> crate::types::error::Result<GpuVendor> {
+    let ctx = EglContext::new(100, 100)?;
+    Ok(ctx.get_gpu_vendor())
 }

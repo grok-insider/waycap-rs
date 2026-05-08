@@ -79,3 +79,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [2.1.1] - 2025-08-07
 ### Changed
 - Made time unit public
+
+## [3.0.0] - TBD
+### Breaking Changes
+- Encoding backends are now opt-in via Cargo feature flags instead of always compiled
+  - `vaapi` — Intel/AMD VAAPI encoding (enabled by default)
+  - `nvidia` — NVIDIA NVENC encoding via CUDA (requires `vulkan` or `egl`)
+  - `vulkan` — Vulkan interop for DMA-BUF → GPU copy (used with `nvidia`)
+  - `egl` — EGL/OpenGL interop alternative to `vulkan` (used with `nvidia`)
+- At least one of `vaapi` or `nvidia` must be enabled or the build will fail
+- `vulkan` and `egl` are mutually exclusive
+- `nvidia` requires either `vulkan` or `egl`

@@ -6,7 +6,8 @@ use std::io;
 pub enum WaycapError {
     /// Errors from FFmpeg
     FFmpeg(ffmpeg_next::Error),
-    /// Egl Errors,
+    /// EGL errors
+    #[cfg(feature = "egl")]
     Egl(khronos_egl::Error),
     /// Errors from PipeWire
     PipeWire(String),
@@ -34,6 +35,8 @@ impl fmt::Display for WaycapError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             WaycapError::FFmpeg(err) => write!(f, "FFmpeg error: {err}"),
+            #[cfg(feature = "egl")]
+            WaycapError::Egl(msg) => write!(f, "Egl Error: {msg}"),
             WaycapError::PipeWire(msg) => write!(f, "PipeWire error: {msg}"),
             WaycapError::Portal(msg) => write!(f, "XDG Portal error: {msg}"),
             WaycapError::Io(err) => write!(f, "I/O error: {err}"),
@@ -44,7 +47,6 @@ impl fmt::Display for WaycapError {
             WaycapError::Device(msg) => write!(f, "Device error: {msg}"),
             WaycapError::Validation(msg) => write!(f, "Validation error: {msg}"),
             WaycapError::Other(msg) => write!(f, "Error: {msg}"),
-            WaycapError::Egl(msg) => write!(f, "Egl Error: {msg}"),
         }
     }
 }
@@ -95,6 +97,7 @@ impl From<&str> for WaycapError {
     }
 }
 
+#[cfg(feature = "egl")]
 impl From<khronos_egl::Error> for WaycapError {
     fn from(err: khronos_egl::Error) -> Self {
         WaycapError::Egl(err)
