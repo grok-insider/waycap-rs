@@ -5,8 +5,6 @@ use crate::types::{
     error::Result,
 };
 
-const MIN_RMS: f32 = 0.01;
-
 pub trait AudioEncoder: Send {
     fn new() -> Result<Self>
     where
@@ -17,23 +15,4 @@ pub trait AudioEncoder: Send {
     fn get_encoder(&self) -> &Option<ffmpeg_next::codec::encoder::Audio>;
     fn get_encoded_recv(&mut self) -> Option<Receiver<EncodedAudioFrame>>;
     fn drop_encoder(&mut self);
-}
-
-pub fn boost_with_rms(samples: &mut [f32]) -> Result<()> {
-    let sum_sqrs = samples.iter().map(|&s| s * s).sum::<f32>();
-    let rms = (sum_sqrs / samples.len() as f32).sqrt();
-
-    let gain = if rms > 0.0 && rms < MIN_RMS {
-        MIN_RMS / rms
-    } else {
-        1.0
-    };
-
-    let gain = gain.min(5.0);
-    for sample in samples.iter_mut() {
-        // Soft clip after boosting: a 5x gain on a quiet frame with transients
-        // could otherwise exceed ±1 and clip hard in the encoder.
-        *sample = crate::utils::soft_clip(*sample * gain);
-    }
-    Ok(())
 }

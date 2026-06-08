@@ -450,6 +450,9 @@ impl<V: VideoEncoder> Capture<V> {
 }
 
 impl Capture<DynamicEncoder> {
+    // The capture constructor legitimately takes the full capture configuration
+    // (encoders, quality, cursor/audio/mic toggles, fps, restore token).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         video_encoder_type: Option<VideoEncoderType>,
         audio_encoder_type: AudioEncoderType,

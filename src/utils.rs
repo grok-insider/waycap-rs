@@ -33,6 +33,18 @@ pub fn mix_desktop_mic(desktop: f32, mic: f32) -> f32 {
     soft_clip(desktop + mic * MIC_MIX_GAIN)
 }
 
+#[cfg(feature = "nvidia")]
+pub fn extract_dmabuf_planes(raw_frame: &RawVideoFrame) -> Result<Vec<DmaBufPlane>> {
+    match raw_frame.dmabuf_fd {
+        Some(fd) => Ok(vec![DmaBufPlane {
+            fd,
+            offset: raw_frame.offset,
+            stride: raw_frame.stride as u32,
+        }]),
+        None => Err("No DMA-BUF file descriptor in frame".into()),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -64,17 +76,5 @@ mod tests {
         }
         // Quiet desktop with no mic is untouched.
         assert!((mix_desktop_mic(0.2, 0.0) - 0.2).abs() < 1e-6);
-    }
-}
-
-#[cfg(feature = "nvidia")]
-pub fn extract_dmabuf_planes(raw_frame: &RawVideoFrame) -> Result<Vec<DmaBufPlane>> {
-    match raw_frame.dmabuf_fd {
-        Some(fd) => Ok(vec![DmaBufPlane {
-            fd,
-            offset: raw_frame.offset,
-            stride: raw_frame.stride as u32,
-        }]),
-        None => Err("No DMA-BUF file descriptor in frame".into()),
     }
 }
