@@ -13,6 +13,7 @@ pub struct CaptureBuilder {
     quality_preset: Option<QualityPreset>,
     include_cursor: bool,
     include_audio: bool,
+    include_mic: bool,
     target_fps: u64,
     restore_token: Option<String>,
 }
@@ -31,6 +32,7 @@ impl CaptureBuilder {
             quality_preset: None,
             include_cursor: false,
             include_audio: false,
+            include_mic: false,
             target_fps: 60,
             restore_token: None,
         }
@@ -57,6 +59,15 @@ impl CaptureBuilder {
 
     pub fn with_audio(mut self) -> Self {
         self.include_audio = true;
+        self
+    }
+
+    /// Optional: also capture the default microphone and mix it into the single
+    /// audio track. Implies [`Self::with_audio`]. The mix happens on the same
+    /// PipeWire clock as the desktop monitor, so it stays in A/V sync.
+    pub fn with_microphone(mut self) -> Self {
+        self.include_audio = true;
+        self.include_mic = true;
         self
     }
 
@@ -101,6 +112,7 @@ impl CaptureBuilder {
             quality,
             self.include_cursor,
             self.include_audio,
+            self.include_mic,
             self.target_fps,
             self.restore_token,
         )

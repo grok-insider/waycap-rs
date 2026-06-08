@@ -91,10 +91,10 @@ mod encoders;
 pub mod pipeline;
 pub mod types;
 mod utils;
-#[cfg(all(feature = "nvidia", feature = "vulkan"))]
-mod waycap_vulkan;
 #[cfg(all(feature = "nvidia", feature = "egl"))]
 mod waycap_egl;
+#[cfg(all(feature = "nvidia", feature = "vulkan"))]
+mod waycap_vulkan;
 
 pub use crate::encoders::dma_buf_encoder::DmaBufEncoder;
 pub use crate::encoders::dynamic_encoder::DynamicEncoder;
@@ -270,7 +270,12 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         &mut self,
         include_cursor: bool,
         restore_token: Option<String>,
-    ) -> Result<(Receiver<RawVideoFrame>, Arc<ReadyState>, Resolution, Option<String>)> {
+    ) -> Result<(
+        Receiver<RawVideoFrame>,
+        Arc<ReadyState>,
+        Resolution,
+        Option<String>,
+    )> {
         let (frame_tx, frame_rx): (Sender<RawVideoFrame>, Receiver<RawVideoFrame>) = bounded(10);
 
         let ready_state = Arc::new(ReadyState::default());
@@ -348,6 +353,7 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         &mut self,
         audio_encoder_type: AudioEncoderType,
         ready_state: Arc<ReadyState>,
+        include_mic: bool,
     ) -> Result<Receiver<RawAudioFrame>> {
         let (pw_audio_sender, pw_audio_recv) = pipewire::channel::channel();
         self.pw_audio_terminate_tx = Some(pw_audio_sender);
@@ -355,7 +361,8 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         let controls = Arc::clone(&self.controls);
         let pw_audio_worker = std::thread::spawn(move || -> Result<()> {
             log::debug!("Starting audio stream");
-            let mut audio_cap = AudioCapture::new(ready_state, audio_tx, pw_audio_recv, controls)?;
+            let mut audio_cap =
+                AudioCapture::new(ready_state, audio_tx, pw_audio_recv, controls, include_mic)?;
             audio_cap.run();
             Ok(())
         });
@@ -449,6 +456,7 @@ impl Capture<DynamicEncoder> {
         quality: QualityPreset,
         include_cursor: bool,
         include_audio: bool,
+        include_mic: bool,
         target_fps: u64,
         restore_token: Option<String>,
     ) -> Result<Self> {
@@ -474,8 +482,11 @@ impl Capture<DynamicEncoder> {
         )?)));
 
         if include_audio {
-            let audio_rx =
-                _self.start_pipewire_audio(audio_encoder_type, Arc::clone(&ready_state))?;
+            let audio_rx = _self.start_pipewire_audio(
+                audio_encoder_type,
+                Arc::clone(&ready_state),
+                include_mic,
+            )?;
             // Wait until both either threads are ready
             ready_state.wait_for_both();
             let audio_loop = audio_encoding_loop(
