@@ -1,14 +1,14 @@
 use crate::types::error::Result;
 
-use ash::{Entry, Instance};
 use ash::vk;
+use ash::{Entry, Instance};
 
 #[cfg(feature = "nvidia")]
-use std::{ffi::c_void, os::unix::io::RawFd};
+use crate::types::video_frame::DmaBufPlane;
 #[cfg(feature = "nvidia")]
 use ash::{ext, khr, Device};
 #[cfg(feature = "nvidia")]
-use crate::types::video_frame::DmaBufPlane;
+use std::{ffi::c_void, os::unix::io::RawFd};
 
 #[cfg(feature = "nvidia")]
 const DRM_FORMAT_MOD_INVALID: u64 = 0x00ff_ffff_ffff_ffff;

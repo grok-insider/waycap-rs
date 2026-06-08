@@ -33,25 +33,24 @@ use super::{
 
 // Vulkan-specific imports
 #[cfg(feature = "vulkan")]
-use std::os::unix::io::RawFd;
+use crate::waycap_vulkan::VulkanContext;
 #[cfg(feature = "vulkan")]
 use cust::{external::ExternalMemory, memory::DevicePointer};
 #[cfg(feature = "vulkan")]
-use crate::waycap_vulkan::VulkanContext;
+use std::os::unix::io::RawFd;
 
 // EGL-specific imports
 #[cfg(feature = "egl")]
-use cust::sys::{
-    cuGraphicsMapResources, cuGraphicsResourceSetMapFlags_v2,
-    cuGraphicsSubResourceGetMappedArray, cuGraphicsUnmapResources, cuGraphicsUnregisterResource,
-    CUarray, CUgraphicsResource,
-};
-#[cfg(feature = "egl")]
-use khronos_egl::Image;
+use super::cuda::cuGraphicsGLRegisterImage;
 #[cfg(feature = "egl")]
 use crate::waycap_egl::EglContext;
 #[cfg(feature = "egl")]
-use super::cuda::cuGraphicsGLRegisterImage;
+use cust::sys::{
+    cuGraphicsMapResources, cuGraphicsResourceSetMapFlags_v2, cuGraphicsSubResourceGetMappedArray,
+    cuGraphicsUnmapResources, cuGraphicsUnregisterResource, CUarray, CUgraphicsResource,
+};
+#[cfg(feature = "egl")]
+use khronos_egl::Image;
 
 // Literally stole these by looking at what OBS uses
 // just magic numbers to me no clue what these are
@@ -263,9 +262,7 @@ impl ProcessingThread for NvencEncoder {
                         }) {
                             Ok(_) => {}
                             Err(crossbeam::channel::TrySendError::Full(_)) => {
-                                log::error!(
-                                    "Could not send encoded video frame. Receiver is full"
-                                );
+                                log::error!("Could not send encoded video frame. Receiver is full");
                             }
                             Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
                                 log::error!(

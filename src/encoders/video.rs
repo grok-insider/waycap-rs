@@ -11,10 +11,10 @@ use crate::types::video_frame::RawVideoFrame;
 use crate::CaptureControls;
 use crossbeam::channel::Receiver;
 use crossbeam::select;
-use ffmpeg_next::{self as ffmpeg};
-use ffmpeg::ffi::{av_hwframe_ctx_alloc, AVBufferRef};
 #[cfg(feature = "vaapi")]
 use ffmpeg::ffi::av_hwdevice_ctx_create;
+use ffmpeg::ffi::{av_hwframe_ctx_alloc, AVBufferRef};
+use ffmpeg_next::{self as ffmpeg};
 use pipewire::spa;
 use std::sync::Mutex;
 

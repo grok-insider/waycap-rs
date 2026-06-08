@@ -31,7 +31,9 @@ pub fn boost_with_rms(samples: &mut [f32]) -> Result<()> {
 
     let gain = gain.min(5.0);
     for sample in samples.iter_mut() {
-        *sample *= gain;
+        // Soft clip after boosting: a 5x gain on a quiet frame with transients
+        // could otherwise exceed ±1 and clip hard in the encoder.
+        *sample = crate::utils::soft_clip(*sample * gain);
     }
     Ok(())
 }

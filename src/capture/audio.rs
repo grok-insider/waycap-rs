@@ -233,8 +233,11 @@ impl AudioCapture {
                             while i + 1 < mixed.len() {
                                 match mic.pop_front() {
                                     Some(m) => {
-                                        mixed[i] = (mixed[i] + m).clamp(-1.0, 1.0);
-                                        mixed[i + 1] = (mixed[i + 1] + m).clamp(-1.0, 1.0);
+                                        // Headroom + soft clip so desktop+mic
+                                        // can't hard-clip ("over-saturated").
+                                        mixed[i] = crate::utils::mix_desktop_mic(mixed[i], m);
+                                        mixed[i + 1] =
+                                            crate::utils::mix_desktop_mic(mixed[i + 1], m);
                                     }
                                     None => break,
                                 }

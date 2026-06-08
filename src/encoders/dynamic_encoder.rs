@@ -20,10 +20,10 @@ use crate::encoders::nvenc_encoder::NvencEncoder;
 use crate::types::error::WaycapError;
 
 // detect_gpu_vendor is only needed when both encoders are available for auto-selection
-#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "vulkan"))]
-use crate::waycap_vulkan::{detect_gpu_vendor, GpuVendor};
 #[cfg(all(feature = "vaapi", feature = "nvidia", feature = "egl"))]
 use crate::waycap_egl::{detect_gpu_vendor, GpuVendor};
+#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "vulkan"))]
+use crate::waycap_vulkan::{detect_gpu_vendor, GpuVendor};
 
 pub enum DynamicEncoder {
     #[cfg(feature = "vaapi")]
