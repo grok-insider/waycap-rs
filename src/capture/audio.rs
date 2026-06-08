@@ -20,13 +20,18 @@ use pipewire::{
 
 use super::Terminate;
 
-/// Capture format forced on both the desktop and microphone streams so their
-/// PCM is sample-aligned for mixing (and matches the Opus encoder's expectation).
+/// Sample rate forced on both audio streams so their PCM is sample-aligned for
+/// mixing (and matches the Opus encoder's 48 kHz expectation).
 const MIX_RATE: u32 = 48_000;
-const MIX_CHANNELS: u32 = 2;
-/// Cap the microphone jitter buffer at ~0.5s of stereo audio so a stalled
-/// desktop stream can never grow it without bound.
-const MIC_BUFFER_CAP: usize = (MIX_RATE as usize) * (MIX_CHANNELS as usize) / 2;
+/// The desktop monitor is captured as stereo (the encoder output layout).
+const DESKTOP_CHANNELS: u32 = 2;
+/// The microphone is captured as **mono** and duplicated into both output
+/// channels by the mixer. Forcing stereo on a mono mic makes PipeWire link the
+/// single source port to FL only, which lands the mic entirely on the left.
+const MIC_CHANNELS: u32 = 1;
+/// Cap the microphone jitter buffer at ~0.5s of mono audio so a stalled desktop
+/// stream can never grow it without bound.
+const MIC_BUFFER_CAP: usize = (MIX_RATE as usize) / 2;
 
 /// Shared, single-threaded microphone sample buffer. Both audio streams run on
 /// the same PipeWire main loop (one thread), so a plain `Rc<RefCell<..>>` is
@@ -92,14 +97,14 @@ impl AudioCapture {
             audio_sender,
             mic_buffer.clone(),
         )?;
-        Self::connect_stream(&mut stream)?;
+        Self::connect_stream(&mut stream, Source::DesktopMonitor)?;
 
         // Optional microphone stream feeding the mix buffer.
         let (mic_stream, mic_listener) = if let Some(buf) = mic_buffer.as_ref() {
             let mut mic_stream =
                 Self::create_stream(core.clone(), "waycap-audio-mic", Source::Microphone)?;
             let mic_listener = Self::setup_mic_listener(&mut mic_stream, Rc::clone(buf))?;
-            Self::connect_stream(&mut mic_stream)?;
+            Self::connect_stream(&mut mic_stream, Source::Microphone)?;
             (Some(mic_stream), Some(mic_listener))
         } else {
             (None, None)
@@ -216,17 +221,24 @@ impl AudioCapture {
                         let samples_f32: &[f32] = bytemuck::cast_slice(samples);
                         let mut mixed = samples_f32[..n_samples as usize].to_vec();
 
-                        // Mix in microphone audio sample-for-sample. Both streams
-                        // are forced to 48 kHz stereo, so popping one mic sample
-                        // per desktop sample preserves L/R interleaving. Missing
-                        // mic samples (underrun) leave the desktop audio as-is.
+                        // Mix in the mono microphone, centered: one mic sample is
+                        // added to BOTH channels of each interleaved stereo frame
+                        // [L, R, L, R, ...]. Capturing the mic as mono and
+                        // duplicating here (rather than forcing a stereo mic
+                        // stream) is what keeps a mono mic from landing only on
+                        // the left. Mic underrun leaves the desktop audio as-is.
                         if let Some(buf) = mic_buffer.as_ref() {
                             let mut mic = buf.borrow_mut();
-                            for out in mixed.iter_mut() {
+                            let mut i = 0;
+                            while i + 1 < mixed.len() {
                                 match mic.pop_front() {
-                                    Some(m) => *out = (*out + m).clamp(-1.0, 1.0),
+                                    Some(m) => {
+                                        mixed[i] = (mixed[i] + m).clamp(-1.0, 1.0);
+                                        mixed[i + 1] = (mixed[i + 1] + m).clamp(-1.0, 1.0);
+                                    }
                                     None => break,
                                 }
+                                i += 2;
                             }
                         }
 
@@ -307,9 +319,14 @@ impl AudioCapture {
         Ok(stream_listener)
     }
 
-    fn connect_stream(stream: &mut StreamRc) -> Result<(), pw::Error> {
-        // Force 48 kHz stereo F32 so the desktop and mic streams produce
-        // sample-aligned PCM (PipeWire inserts a resampler/remix as needed).
+    fn connect_stream(stream: &mut StreamRc, source: Source) -> Result<(), pw::Error> {
+        // Force 48 kHz F32 at a per-source channel count (desktop: stereo, mic:
+        // mono) so the PCM is sample-aligned for mixing; PipeWire inserts a
+        // resampler/remix as needed.
+        let channels = match source {
+            Source::DesktopMonitor => DESKTOP_CHANNELS,
+            Source::Microphone => MIC_CHANNELS,
+        };
         let audio_spa_obj = pw::spa::pod::object! {
             pw::spa::utils::SpaTypes::ObjectParamFormat,
             pw::spa::param::ParamType::EnumFormat,
@@ -336,7 +353,7 @@ impl AudioCapture {
             pw::spa::pod::property!(
                 pw::spa::param::format::FormatProperties::AudioChannels,
                 Int,
-                MIX_CHANNELS as i32
+                channels as i32
             )
         };
 
