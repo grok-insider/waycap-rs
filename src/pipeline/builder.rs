@@ -1,7 +1,7 @@
 use crate::{
     encoders::dynamic_encoder::DynamicEncoder,
     types::{
-        config::{AudioEncoder, QualityPreset, VideoEncoder},
+        config::{AudioEncoder, QualityPreset, RateControl, VideoEncoder},
         error::Result,
     },
     Capture,
@@ -11,6 +11,7 @@ pub struct CaptureBuilder {
     video_encoder: Option<VideoEncoder>,
     audio_encoder: Option<AudioEncoder>,
     quality_preset: Option<QualityPreset>,
+    rate_control: RateControl,
     include_cursor: bool,
     include_audio: bool,
     include_mic: bool,
@@ -30,6 +31,7 @@ impl CaptureBuilder {
             video_encoder: None,
             audio_encoder: None,
             quality_preset: None,
+            rate_control: RateControl::default(),
             include_cursor: false,
             include_audio: false,
             include_mic: false,
@@ -76,6 +78,14 @@ impl CaptureBuilder {
         self
     }
 
+    /// Optional: encoder rate control. Default: constant-quality VBR from the
+    /// quality preset. Use [`RateControl::ConstantBitrate`] for a predictable
+    /// output rate (e.g. a RAM replay buffer in high-motion scenes).
+    pub fn with_rate_control(mut self, rate_control: RateControl) -> Self {
+        self.rate_control = rate_control;
+        self
+    }
+
     /// Optional: Set a target FPS for the recording.
     /// Default: 60fps
     pub fn with_target_fps(mut self, fps: u64) -> Self {
@@ -110,6 +120,7 @@ impl CaptureBuilder {
             self.video_encoder,
             audio_encoder,
             quality,
+            self.rate_control,
             self.include_cursor,
             self.include_audio,
             self.include_mic,

@@ -38,6 +38,7 @@ impl DynamicEncoder {
         width: u32,
         height: u32,
         quality_preset: crate::types::config::QualityPreset,
+        rate_control: crate::types::config::RateControl,
     ) -> crate::types::error::Result<DynamicEncoder> {
         let encoder_type = match encoder_type {
             Some(typ) => typ,
@@ -58,15 +59,37 @@ impl DynamicEncoder {
             #[cfg(all(feature = "nvidia", not(feature = "vaapi")))]
             None => VideoEncoderType::H264Nvenc,
         };
+        #[cfg(not(feature = "nvidia"))]
+        let _ = rate_control; // only NVENC honors it today
         Ok(match encoder_type {
             #[cfg(feature = "vaapi")]
             VideoEncoderType::H264Vaapi => {
                 DynamicEncoder::Vaapi(VaapiEncoder::new(width, height, quality_preset)?)
             }
             #[cfg(feature = "nvidia")]
-            VideoEncoderType::H264Nvenc => {
-                DynamicEncoder::Nvenc(NvencEncoder::new(width, height, quality_preset)?)
-            }
+            VideoEncoderType::H264Nvenc => DynamicEncoder::Nvenc(NvencEncoder::new(
+                width,
+                height,
+                quality_preset,
+                "h264_nvenc",
+                rate_control,
+            )?),
+            #[cfg(feature = "nvidia")]
+            VideoEncoderType::HevcNvenc => DynamicEncoder::Nvenc(NvencEncoder::new(
+                width,
+                height,
+                quality_preset,
+                "hevc_nvenc",
+                rate_control,
+            )?),
+            #[cfg(feature = "nvidia")]
+            VideoEncoderType::Av1Nvenc => DynamicEncoder::Nvenc(NvencEncoder::new(
+                width,
+                height,
+                quality_preset,
+                "av1_nvenc",
+                rate_control,
+            )?),
         })
     }
 }

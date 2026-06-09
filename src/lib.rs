@@ -457,6 +457,7 @@ impl Capture<DynamicEncoder> {
         video_encoder_type: Option<VideoEncoderType>,
         audio_encoder_type: AudioEncoderType,
         quality: QualityPreset,
+        rate_control: crate::types::config::RateControl,
         include_cursor: bool,
         include_audio: bool,
         include_mic: bool,
@@ -482,6 +483,7 @@ impl Capture<DynamicEncoder> {
             resolution.width,
             resolution.height,
             quality,
+            rate_control,
         )?)));
 
         if include_audio {
