@@ -419,7 +419,13 @@ impl<V: VideoEncoder> Capture<V> {
     /// the [`crate::pipeline::builder::CaptureBuilder`] to record again.
     /// If your goal is to temporarily stop recording use [`Self::pause`] or [`Self::finish`] + [`Self::reset`]
     pub fn close(&mut self) -> Result<()> {
-        self.finish()?;
+        // Tear down unconditionally: an early `?` here (e.g. `finish()` failing
+        // because the encoders were already drained by an explicit caller-side
+        // `finish()`) used to skip the Terminate sends, after which `Drop`
+        // joined the still-running PipeWire loops and hung the calling thread
+        // forever. Remember the drain result, but always stop + terminate +
+        // join before returning it.
+        let finished = self.finish();
         self.controls.stop();
         if let Some(pw_vid) = &self.pw_video_terminate_tx {
             let _ = pw_vid.send(Terminate {});
@@ -435,7 +441,7 @@ impl<V: VideoEncoder> Capture<V> {
         drop(self.video_encoder.take());
         drop(self.audio_encoder.take());
 
-        Ok(())
+        finished
     }
 
     pub fn get_output(&mut self) -> Receiver<V::Output> {

@@ -140,7 +140,11 @@ impl AudioEncoder for OpusEncoder {
 
     fn drain(&mut self) -> crate::types::error::Result<()> {
         if let Some(ref mut encoder) = self.encoder {
-            encoder.send_eof()?;
+            // Idempotent: tolerate a repeated drain (explicit finish + close).
+            match encoder.send_eof() {
+                Ok(()) | Err(ffmpeg::Error::Eof) => {}
+                Err(e) => return Err(e.into()),
+            }
             let mut packet = ffmpeg::codec::packet::Packet::empty();
             while encoder.receive_packet(&mut packet).is_ok() {} // Discard frames
         }

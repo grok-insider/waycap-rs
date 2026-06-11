@@ -134,7 +134,13 @@ impl VideoEncoder for NvencEncoder {
 
     fn drain(&mut self) -> Result<()> {
         if let Some(ref mut encoder) = self.encoder {
-            encoder.send_eof()?;
+            // Idempotent: a second drain (e.g. an explicit `finish()` followed
+            // by `close()`/Drop) hits EOF on the already-flushed encoder, which
+            // is fine — only real errors propagate.
+            match encoder.send_eof() {
+                Ok(()) | Err(ffmpeg::Error::Eof) => {}
+                Err(e) => return Err(e.into()),
+            }
             let mut packet = ffmpeg::codec::packet::Packet::empty();
             while encoder.receive_packet(&mut packet).is_ok() {}
         }
