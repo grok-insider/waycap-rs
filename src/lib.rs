@@ -91,10 +91,10 @@ mod encoders;
 pub mod pipeline;
 pub mod types;
 mod utils;
-#[cfg(all(feature = "nvidia", feature = "vulkan"))]
-mod waycap_vulkan;
 #[cfg(all(feature = "nvidia", feature = "egl"))]
 mod waycap_egl;
+#[cfg(all(feature = "nvidia", feature = "vulkan"))]
+mod waycap_vulkan;
 
 pub use crate::encoders::dma_buf_encoder::DmaBufEncoder;
 pub use crate::encoders::dynamic_encoder::DynamicEncoder;
@@ -270,7 +270,12 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         &mut self,
         include_cursor: bool,
         restore_token: Option<String>,
-    ) -> Result<(Receiver<RawVideoFrame>, Arc<ReadyState>, Resolution, Option<String>)> {
+    ) -> Result<(
+        Receiver<RawVideoFrame>,
+        Arc<ReadyState>,
+        Resolution,
+        Option<String>,
+    )> {
         let (frame_tx, frame_rx): (Sender<RawVideoFrame>, Receiver<RawVideoFrame>) = bounded(10);
 
         let ready_state = Arc::new(ReadyState::default());
@@ -348,6 +353,7 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         &mut self,
         audio_encoder_type: AudioEncoderType,
         ready_state: Arc<ReadyState>,
+        include_mic: bool,
     ) -> Result<Receiver<RawAudioFrame>> {
         let (pw_audio_sender, pw_audio_recv) = pipewire::channel::channel();
         self.pw_audio_terminate_tx = Some(pw_audio_sender);
@@ -355,7 +361,8 @@ impl<V: VideoEncoder + PipewireSPA + StartVideoEncoder> Capture<V> {
         let controls = Arc::clone(&self.controls);
         let pw_audio_worker = std::thread::spawn(move || -> Result<()> {
             log::debug!("Starting audio stream");
-            let mut audio_cap = AudioCapture::new(ready_state, audio_tx, pw_audio_recv, controls)?;
+            let mut audio_cap =
+                AudioCapture::new(ready_state, audio_tx, pw_audio_recv, controls, include_mic)?;
             audio_cap.run();
             Ok(())
         });
@@ -412,7 +419,13 @@ impl<V: VideoEncoder> Capture<V> {
     /// the [`crate::pipeline::builder::CaptureBuilder`] to record again.
     /// If your goal is to temporarily stop recording use [`Self::pause`] or [`Self::finish`] + [`Self::reset`]
     pub fn close(&mut self) -> Result<()> {
-        self.finish()?;
+        // Tear down unconditionally: an early `?` here (e.g. `finish()` failing
+        // because the encoders were already drained by an explicit caller-side
+        // `finish()`) used to skip the Terminate sends, after which `Drop`
+        // joined the still-running PipeWire loops and hung the calling thread
+        // forever. Remember the drain result, but always stop + terminate +
+        // join before returning it.
+        let finished = self.finish();
         self.controls.stop();
         if let Some(pw_vid) = &self.pw_video_terminate_tx {
             let _ = pw_vid.send(Terminate {});
@@ -428,7 +441,7 @@ impl<V: VideoEncoder> Capture<V> {
         drop(self.video_encoder.take());
         drop(self.audio_encoder.take());
 
-        Ok(())
+        finished
     }
 
     pub fn get_output(&mut self) -> Receiver<V::Output> {
@@ -443,12 +456,17 @@ impl<V: VideoEncoder> Capture<V> {
 }
 
 impl Capture<DynamicEncoder> {
+    // The capture constructor legitimately takes the full capture configuration
+    // (encoders, quality, cursor/audio/mic toggles, fps, restore token).
+    #[allow(clippy::too_many_arguments)]
     pub fn new(
         video_encoder_type: Option<VideoEncoderType>,
         audio_encoder_type: AudioEncoderType,
         quality: QualityPreset,
+        rate_control: crate::types::config::RateControl,
         include_cursor: bool,
         include_audio: bool,
+        include_mic: bool,
         target_fps: u64,
         restore_token: Option<String>,
     ) -> Result<Self> {
@@ -471,11 +489,15 @@ impl Capture<DynamicEncoder> {
             resolution.width,
             resolution.height,
             quality,
+            rate_control,
         )?)));
 
         if include_audio {
-            let audio_rx =
-                _self.start_pipewire_audio(audio_encoder_type, Arc::clone(&ready_state))?;
+            let audio_rx = _self.start_pipewire_audio(
+                audio_encoder_type,
+                Arc::clone(&ready_state),
+                include_mic,
+            )?;
             // Wait until both either threads are ready
             ready_state.wait_for_both();
             let audio_loop = audio_encoding_loop(

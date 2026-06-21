@@ -1,18 +1,18 @@
+#[cfg(all(feature = "vaapi", feature = "nvidia"))]
+use crate::types::error::WaycapError;
+#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "egl"))]
+use crate::waycap_egl::{detect_gpu_vendor, GpuVendor};
+#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "vulkan"))]
+use crate::waycap_vulkan::{detect_gpu_vendor, GpuVendor};
+#[cfg(feature = "nvidia")]
+use crate::NvencEncoder;
+#[cfg(feature = "vaapi")]
+use crate::VaapiEncoder;
 use crate::{
     encoders::video::{PipewireSPA, StartVideoEncoder},
     types::video_frame::RawVideoFrame,
     VideoEncoder,
 };
-#[cfg(feature = "vaapi")]
-use crate::VaapiEncoder;
-#[cfg(feature = "nvidia")]
-use crate::NvencEncoder;
-#[cfg(all(feature = "vaapi", feature = "nvidia"))]
-use crate::types::error::WaycapError;
-#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "vulkan"))]
-use crate::waycap_vulkan::{detect_gpu_vendor, GpuVendor};
-#[cfg(all(feature = "vaapi", feature = "nvidia", feature = "egl"))]
-use crate::waycap_egl::{detect_gpu_vendor, GpuVendor};
 use crossbeam::channel::Receiver;
 
 use crate::types::error::Result;

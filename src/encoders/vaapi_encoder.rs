@@ -168,8 +168,11 @@ impl VideoEncoder for VaapiEncoder {
                 encoder.send_frame(&filtered)?;
             }
 
-            // Drain encoder
-            encoder.send_eof()?;
+            // Drain encoder (idempotent: tolerate a repeated drain).
+            match encoder.send_eof() {
+                Ok(()) | Err(ffmpeg::Error::Eof) => {}
+                Err(e) => return Err(e.into()),
+            }
             let mut packet = ffmpeg::codec::packet::Packet::empty();
             while encoder.receive_packet(&mut packet).is_ok() {} // Discard these frames
         }

@@ -19,7 +19,7 @@ use pipewire as pw;
 use crate::{
     encoders::video::{PipewireSPA, ProcessingThread, VideoEncoder},
     types::{
-        config::QualityPreset,
+        config::{QualityPreset, RateControl},
         error::{Result, WaycapError},
         video_frame::{EncodedVideoFrame, RawVideoFrame},
     },
@@ -33,25 +33,24 @@ use super::{
 
 // Vulkan-specific imports
 #[cfg(feature = "vulkan")]
-use std::os::unix::io::RawFd;
+use crate::waycap_vulkan::VulkanContext;
 #[cfg(feature = "vulkan")]
 use cust::{external::ExternalMemory, memory::DevicePointer};
 #[cfg(feature = "vulkan")]
-use crate::waycap_vulkan::VulkanContext;
+use std::os::unix::io::RawFd;
 
 // EGL-specific imports
 #[cfg(feature = "egl")]
-use cust::sys::{
-    cuGraphicsMapResources, cuGraphicsResourceSetMapFlags_v2,
-    cuGraphicsSubResourceGetMappedArray, cuGraphicsUnmapResources, cuGraphicsUnregisterResource,
-    CUarray, CUgraphicsResource,
-};
-#[cfg(feature = "egl")]
-use khronos_egl::Image;
+use super::cuda::cuGraphicsGLRegisterImage;
 #[cfg(feature = "egl")]
 use crate::waycap_egl::EglContext;
 #[cfg(feature = "egl")]
-use super::cuda::cuGraphicsGLRegisterImage;
+use cust::sys::{
+    cuGraphicsMapResources, cuGraphicsResourceSetMapFlags_v2, cuGraphicsSubResourceGetMappedArray,
+    cuGraphicsUnmapResources, cuGraphicsUnregisterResource, CUarray, CUgraphicsResource,
+};
+#[cfg(feature = "egl")]
+use khronos_egl::Image;
 
 // Literally stole these by looking at what OBS uses
 // just magic numbers to me no clue what these are
@@ -78,6 +77,7 @@ pub struct NvencEncoder {
     height: u32,
     encoder_name: String,
     quality: QualityPreset,
+    rate_control: RateControl,
     encoded_frame_recv: Option<Receiver<EncodedVideoFrame>>,
     encoded_frame_sender: Sender<EncodedVideoFrame>,
 
@@ -117,6 +117,7 @@ impl VideoEncoder for NvencEncoder {
             self.height,
             &self.encoder_name,
             &self.quality,
+            self.rate_control,
             &self.cuda_ctx,
         )?;
         self.encoder = Some(new_encoder);
@@ -133,7 +134,13 @@ impl VideoEncoder for NvencEncoder {
 
     fn drain(&mut self) -> Result<()> {
         if let Some(ref mut encoder) = self.encoder {
-            encoder.send_eof()?;
+            // Idempotent: a second drain (e.g. an explicit `finish()` followed
+            // by `close()`/Drop) hits EOF on the already-flushed encoder, which
+            // is fine — only real errors propagate.
+            match encoder.send_eof() {
+                Ok(()) | Err(ffmpeg::Error::Eof) => {}
+                Err(e) => return Err(e.into()),
+            }
             let mut packet = ffmpeg::codec::packet::Packet::empty();
             while encoder.receive_packet(&mut packet).is_ok() {}
         }
@@ -263,9 +270,7 @@ impl ProcessingThread for NvencEncoder {
                         }) {
                             Ok(_) => {}
                             Err(crossbeam::channel::TrySendError::Full(_)) => {
-                                log::error!(
-                                    "Could not send encoded video frame. Receiver is full"
-                                );
+                                log::error!("Could not send encoded video frame. Receiver is full");
                             }
                             Err(crossbeam::channel::TrySendError::Disconnected(_)) => {
                                 log::error!(
@@ -485,11 +490,17 @@ impl PipewireSPA for NvencEncoder {
 }
 
 impl NvencEncoder {
-    pub(crate) fn new(width: u32, height: u32, quality: QualityPreset) -> Result<Self> {
-        let encoder_name = "h264_nvenc";
+    pub(crate) fn new(
+        width: u32,
+        height: u32,
+        quality: QualityPreset,
+        encoder_name: &str,
+        rate_control: RateControl,
+    ) -> Result<Self> {
         let (frame_tx, frame_rx) = bounded(10);
         let cuda_ctx = cust::quick_init().unwrap();
-        let encoder = Self::create_encoder(width, height, encoder_name, &quality, &cuda_ctx)?;
+        let encoder =
+            Self::create_encoder(width, height, encoder_name, &quality, rate_control, &cuda_ctx)?;
 
         #[cfg(feature = "vulkan")]
         let vulkan_ctx = Box::new(VulkanContext::new(width, height)?);
@@ -504,6 +515,7 @@ impl NvencEncoder {
             height,
             encoder_name: encoder_name.to_string(),
             quality,
+            rate_control,
             encoded_frame_recv: Some(frame_rx),
             encoded_frame_sender: frame_tx,
             cuda_ctx,
@@ -531,6 +543,7 @@ impl NvencEncoder {
         height: u32,
         encoder: &str,
         quality: &QualityPreset,
+        rate_control: RateControl,
         cuda_ctx: &Context,
     ) -> Result<ffmpeg::codec::encoder::Video> {
         let encoder_codec =
@@ -607,37 +620,59 @@ impl NvencEncoder {
         encoder_ctx.set_gop(GOP_SIZE);
 
         let encoder_params = ffmpeg::codec::Parameters::new();
-        let opts = Self::get_encoder_params(quality);
+        let opts = Self::get_encoder_params(quality, rate_control);
         encoder_ctx.set_parameters(encoder_params)?;
         let encoder = encoder_ctx.open_with(opts)?;
         Ok(encoder)
     }
 
-    fn get_encoder_params(quality: &QualityPreset) -> ffmpeg::Dictionary<'_> {
+    fn get_encoder_params(
+        quality: &QualityPreset,
+        rate_control: RateControl,
+    ) -> ffmpeg::Dictionary<'static> {
         let mut opts = ffmpeg::Dictionary::new();
         opts.set("vsync", "vfr");
-        opts.set("rc", "vbr");
         opts.set("tune", "hq");
-        match quality {
-            QualityPreset::Low => {
-                opts.set("preset", "p2");
-                opts.set("cq", "30");
-                opts.set("b:v", "20M");
+        match rate_control {
+            // Constant bitrate: predictable output rate (what an in-RAM replay
+            // buffer sizes itself against). A 1-second VBV holds bursts to the
+            // target; the quality preset still picks the speed/quality preset.
+            RateControl::ConstantBitrate { kbps } => {
+                opts.set("rc", "cbr");
+                opts.set("b:v", &format!("{kbps}k"));
+                opts.set("maxrate", &format!("{kbps}k"));
+                opts.set("bufsize", &format!("{kbps}k"));
+                let preset = match quality {
+                    QualityPreset::Low => "p2",
+                    QualityPreset::Medium => "p4",
+                    QualityPreset::High | QualityPreset::Ultra => "p7",
+                };
+                opts.set("preset", preset);
             }
-            QualityPreset::Medium => {
-                opts.set("preset", "p4");
-                opts.set("cq", "25");
-                opts.set("b:v", "40M");
-            }
-            QualityPreset::High => {
-                opts.set("preset", "p7");
-                opts.set("cq", "20");
-                opts.set("b:v", "80M");
-            }
-            QualityPreset::Ultra => {
-                opts.set("preset", "p7");
-                opts.set("cq", "15");
-                opts.set("b:v", "120M");
+            RateControl::Quality => {
+                opts.set("rc", "vbr");
+                match quality {
+                    QualityPreset::Low => {
+                        opts.set("preset", "p2");
+                        opts.set("cq", "30");
+                        opts.set("b:v", "20M");
+                    }
+                    QualityPreset::Medium => {
+                        opts.set("preset", "p4");
+                        opts.set("cq", "25");
+                        opts.set("b:v", "40M");
+                    }
+                    QualityPreset::High => {
+                        opts.set("preset", "p7");
+                        opts.set("cq", "20");
+                        opts.set("b:v", "80M");
+                    }
+                    QualityPreset::Ultra => {
+                        opts.set("preset", "p7");
+                        opts.set("cq", "15");
+                        opts.set("b:v", "120M");
+                    }
+                }
             }
         }
         opts

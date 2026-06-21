@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 
 use crate::types::audio_frame::EncodedAudioFrame;
 
-use super::audio::{boost_with_rms, AudioEncoder};
+use super::audio::AudioEncoder;
 
 pub struct OpusEncoder {
     encoder: Option<ffmpeg::codec::encoder::Audio>,
@@ -25,7 +25,9 @@ impl OpusEncoder {
             .audio()?;
 
         encoder_ctx.set_rate(48000);
-        encoder_ctx.set_bit_rate(70_000);
+        // 128 kbps stereo Opus: clear for game/desktop audio. 70k was harsh on
+        // complex content.
+        encoder_ctx.set_bit_rate(128_000);
         encoder_ctx.set_format(ffmpeg::format::Sample::F32(
             ffmpeg_next::format::sample::Type::Packed,
         ));
@@ -65,7 +67,7 @@ impl AudioEncoder for OpusEncoder {
 
     fn process(
         &mut self,
-        mut raw_frame: crate::types::audio_frame::RawAudioFrame,
+        raw_frame: crate::types::audio_frame::RawAudioFrame,
     ) -> crate::types::error::Result<()> {
         if let Some(ref mut encoder) = self.encoder {
             let n_channels = encoder.channels() as usize;
@@ -79,9 +81,10 @@ impl AudioEncoder for OpusEncoder {
 
             let frame_size = encoder.frame_size() as usize;
 
-            // Boost the audio so that even if system audio level is low
-            // it's still audible in playback
-            boost_with_rms(&mut raw_frame.samples)?;
+            // Unity capture: encode the captured samples at their true level. The
+            // old per-frame RMS boost was a crude auto-gain that pumped/compressed
+            // quiet passages (and amplified noise), which sounded "saturated".
+            // Desktop+mic mixing already soft-clips for headroom in the capturer.
             self.leftover_data.extend(raw_frame.samples);
 
             // Send chunked frames to encoder
@@ -137,7 +140,11 @@ impl AudioEncoder for OpusEncoder {
 
     fn drain(&mut self) -> crate::types::error::Result<()> {
         if let Some(ref mut encoder) = self.encoder {
-            encoder.send_eof()?;
+            // Idempotent: tolerate a repeated drain (explicit finish + close).
+            match encoder.send_eof() {
+                Ok(()) | Err(ffmpeg::Error::Eof) => {}
+                Err(e) => return Err(e.into()),
+            }
             let mut packet = ffmpeg::codec::packet::Packet::empty();
             while encoder.receive_packet(&mut packet).is_ok() {} // Discard frames
         }

@@ -1,7 +1,7 @@
 use crate::{
     encoders::dynamic_encoder::DynamicEncoder,
     types::{
-        config::{AudioEncoder, QualityPreset, VideoEncoder},
+        config::{AudioEncoder, QualityPreset, RateControl, VideoEncoder},
         error::Result,
     },
     Capture,
@@ -11,8 +11,10 @@ pub struct CaptureBuilder {
     video_encoder: Option<VideoEncoder>,
     audio_encoder: Option<AudioEncoder>,
     quality_preset: Option<QualityPreset>,
+    rate_control: RateControl,
     include_cursor: bool,
     include_audio: bool,
+    include_mic: bool,
     target_fps: u64,
     restore_token: Option<String>,
 }
@@ -29,8 +31,10 @@ impl CaptureBuilder {
             video_encoder: None,
             audio_encoder: None,
             quality_preset: None,
+            rate_control: RateControl::default(),
             include_cursor: false,
             include_audio: false,
+            include_mic: false,
             target_fps: 60,
             restore_token: None,
         }
@@ -60,8 +64,25 @@ impl CaptureBuilder {
         self
     }
 
+    /// Optional: also capture the default microphone and mix it into the single
+    /// audio track. Implies [`Self::with_audio`]. The mix happens on the same
+    /// PipeWire clock as the desktop monitor, so it stays in A/V sync.
+    pub fn with_microphone(mut self) -> Self {
+        self.include_audio = true;
+        self.include_mic = true;
+        self
+    }
+
     pub fn with_quality_preset(mut self, quality: QualityPreset) -> Self {
         self.quality_preset = Some(quality);
+        self
+    }
+
+    /// Optional: encoder rate control. Default: constant-quality VBR from the
+    /// quality preset. Use [`RateControl::ConstantBitrate`] for a predictable
+    /// output rate (e.g. a RAM replay buffer in high-motion scenes).
+    pub fn with_rate_control(mut self, rate_control: RateControl) -> Self {
+        self.rate_control = rate_control;
         self
     }
 
@@ -99,8 +120,10 @@ impl CaptureBuilder {
             self.video_encoder,
             audio_encoder,
             quality,
+            self.rate_control,
             self.include_cursor,
             self.include_audio,
+            self.include_mic,
             self.target_fps,
             self.restore_token,
         )
