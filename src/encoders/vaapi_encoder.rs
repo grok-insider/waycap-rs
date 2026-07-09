@@ -3,7 +3,7 @@ use std::ptr::null_mut;
 use crate::{
     encoders::video::{PipewireSPA, ProcessingThread, VideoEncoder},
     types::{
-        config::QualityPreset,
+        config::{EncodeOptions, QualityPreset},
         error::{Result, WaycapError},
         video_frame::{EncodedVideoFrame, RawVideoFrame},
     },
@@ -22,7 +22,7 @@ use ffmpeg_next::{
 };
 use pipewire as pw;
 
-use super::video::{create_hw_device, create_hw_frame_ctx, GOP_SIZE};
+use super::video::{create_hw_device, create_hw_frame_ctx};
 
 /// Encoder which encodes frames using Vaapi
 pub struct VaapiEncoder {
@@ -31,6 +31,7 @@ pub struct VaapiEncoder {
     height: u32,
     encoder_name: String,
     quality: QualityPreset,
+    encode: EncodeOptions,
     encoded_frame_recv: Option<Receiver<EncodedVideoFrame>>,
     encoded_frame_sender: Sender<EncodedVideoFrame>,
     filter_graph: Option<ffmpeg::filter::Graph>,
@@ -131,8 +132,13 @@ impl VideoEncoder for VaapiEncoder {
     type Output = EncodedVideoFrame;
     fn reset(&mut self) -> Result<()> {
         self.drop_processor();
-        let new_encoder =
-            Self::create_encoder(self.width, self.height, &self.encoder_name, &self.quality)?;
+        let new_encoder = Self::create_encoder(
+            self.width,
+            self.height,
+            &self.encoder_name,
+            &self.quality,
+            self.encode,
+        )?;
 
         let new_filter_graph = Self::create_filter_graph(&new_encoder, self.width, self.height)?;
 
@@ -244,9 +250,14 @@ impl PipewireSPA for VaapiEncoder {
 }
 
 impl VaapiEncoder {
-    pub(crate) fn new(width: u32, height: u32, quality: QualityPreset) -> Result<Self> {
+    pub(crate) fn new(
+        width: u32,
+        height: u32,
+        quality: QualityPreset,
+        encode: EncodeOptions,
+    ) -> Result<Self> {
         let encoder_name = "h264_vaapi";
-        let encoder = Self::create_encoder(width, height, encoder_name, &quality)?;
+        let encoder = Self::create_encoder(width, height, encoder_name, &quality, encode)?;
 
         let (frame_tx, frame_rx): (Sender<EncodedVideoFrame>, Receiver<EncodedVideoFrame>) =
             bounded(10);
@@ -258,6 +269,7 @@ impl VaapiEncoder {
             height,
             encoder_name: encoder_name.to_string(),
             quality,
+            encode,
             encoded_frame_recv: Some(frame_rx),
             encoded_frame_sender: frame_tx,
             filter_graph,
@@ -269,6 +281,7 @@ impl VaapiEncoder {
         height: u32,
         encoder: &str,
         quality: &QualityPreset,
+        encode: EncodeOptions,
     ) -> Result<ffmpeg::codec::encoder::Video> {
         let encoder_codec =
             ffmpeg::codec::encoder::find_by_name(encoder).ok_or(ffmpeg::Error::EncoderNotFound)?;
@@ -317,21 +330,27 @@ impl VaapiEncoder {
 
         // Needed to insert I-Frames more frequently so we don't lose full seconds
         // when popping frames from the front
-        encoder_ctx.set_gop(GOP_SIZE);
+        encoder_ctx.set_gop(encode.gop_size.max(1));
 
         let encoder_params = ffmpeg::codec::Parameters::new();
 
-        let opts = Self::get_encoder_params(quality);
+        let opts = Self::get_encoder_params(quality, encode);
 
         encoder_ctx.set_parameters(encoder_params)?;
         let encoder = encoder_ctx.open_with(opts)?;
         Ok(encoder)
     }
 
-    fn get_encoder_params(quality: &QualityPreset) -> ffmpeg::Dictionary<'_> {
+    fn get_encoder_params(
+        quality: &QualityPreset,
+        encode: EncodeOptions,
+    ) -> ffmpeg::Dictionary<'_> {
         let mut opts = ffmpeg::Dictionary::new();
         opts.set("vsync", "vfr");
         opts.set("rc", "VBR");
+        // VAAPI has no NVENC-style `tune`; color_range still applies.
+        opts.set("color_range", encode.color_range.as_ffmpeg_color_range());
+        let _ = encode.tune;
         match quality {
             QualityPreset::Low => {
                 opts.set("qp", "30");

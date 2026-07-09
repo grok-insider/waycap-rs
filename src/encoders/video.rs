@@ -18,8 +18,6 @@ use ffmpeg_next::{self as ffmpeg};
 use pipewire::spa;
 use std::sync::Mutex;
 
-pub const GOP_SIZE: u32 = 30;
-
 /// Base trait for video encoders. defines the output type of an encoder.
 ///
 /// To use this, implement either [`ProcessingThread::process`] for processing individual frames on

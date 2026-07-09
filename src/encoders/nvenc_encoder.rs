@@ -19,7 +19,7 @@ use pipewire as pw;
 use crate::{
     encoders::video::{PipewireSPA, ProcessingThread, VideoEncoder},
     types::{
-        config::{QualityPreset, RateControl},
+        config::{EncodeOptions, QualityPreset, RateControl},
         error::{Result, WaycapError},
         video_frame::{EncodedVideoFrame, RawVideoFrame},
     },
@@ -28,7 +28,7 @@ use crate::{
 
 use super::{
     cuda::AVCUDADeviceContext,
-    video::{create_hw_frame_ctx, GOP_SIZE},
+    video::create_hw_frame_ctx,
 };
 
 // Vulkan-specific imports
@@ -78,6 +78,7 @@ pub struct NvencEncoder {
     encoder_name: String,
     quality: QualityPreset,
     rate_control: RateControl,
+    encode: EncodeOptions,
     encoded_frame_recv: Option<Receiver<EncodedVideoFrame>>,
     encoded_frame_sender: Sender<EncodedVideoFrame>,
 
@@ -118,6 +119,7 @@ impl VideoEncoder for NvencEncoder {
             &self.encoder_name,
             &self.quality,
             self.rate_control,
+            self.encode,
             &self.cuda_ctx,
         )?;
         self.encoder = Some(new_encoder);
@@ -496,11 +498,19 @@ impl NvencEncoder {
         quality: QualityPreset,
         encoder_name: &str,
         rate_control: RateControl,
+        encode: EncodeOptions,
     ) -> Result<Self> {
         let (frame_tx, frame_rx) = bounded(10);
         let cuda_ctx = cust::quick_init().unwrap();
-        let encoder =
-            Self::create_encoder(width, height, encoder_name, &quality, rate_control, &cuda_ctx)?;
+        let encoder = Self::create_encoder(
+            width,
+            height,
+            encoder_name,
+            &quality,
+            rate_control,
+            encode,
+            &cuda_ctx,
+        )?;
 
         #[cfg(feature = "vulkan")]
         let vulkan_ctx = Box::new(VulkanContext::new(width, height)?);
@@ -516,6 +526,7 @@ impl NvencEncoder {
             encoder_name: encoder_name.to_string(),
             quality,
             rate_control,
+            encode,
             encoded_frame_recv: Some(frame_rx),
             encoded_frame_sender: frame_tx,
             cuda_ctx,
@@ -544,6 +555,7 @@ impl NvencEncoder {
         encoder: &str,
         quality: &QualityPreset,
         rate_control: RateControl,
+        encode: EncodeOptions,
         cuda_ctx: &Context,
     ) -> Result<ffmpeg::codec::encoder::Video> {
         let encoder_codec =
@@ -617,10 +629,10 @@ impl NvencEncoder {
         }
 
         encoder_ctx.set_time_base(Rational::new(1, TIME_UNIT_NS as i32));
-        encoder_ctx.set_gop(GOP_SIZE);
+        encoder_ctx.set_gop(encode.gop_size.max(1));
 
         let encoder_params = ffmpeg::codec::Parameters::new();
-        let opts = Self::get_encoder_params(quality, rate_control);
+        let opts = Self::get_encoder_params(quality, rate_control, encode);
         encoder_ctx.set_parameters(encoder_params)?;
         let encoder = encoder_ctx.open_with(opts)?;
         Ok(encoder)
@@ -629,10 +641,12 @@ impl NvencEncoder {
     fn get_encoder_params(
         quality: &QualityPreset,
         rate_control: RateControl,
+        encode: EncodeOptions,
     ) -> ffmpeg::Dictionary<'static> {
         let mut opts = ffmpeg::Dictionary::new();
         opts.set("vsync", "vfr");
-        opts.set("tune", "hq");
+        opts.set("tune", encode.tune.as_ffmpeg_tune());
+        opts.set("color_range", encode.color_range.as_ffmpeg_color_range());
         match rate_control {
             // Constant bitrate: predictable output rate (what an in-RAM replay
             // buffer sizes itself against). A 1-second VBV holds bursts to the

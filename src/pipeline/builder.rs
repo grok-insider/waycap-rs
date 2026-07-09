@@ -1,7 +1,10 @@
 use crate::{
     encoders::dynamic_encoder::DynamicEncoder,
     types::{
-        config::{AudioEncoder, QualityPreset, RateControl, VideoEncoder},
+        config::{
+            AudioEncoder, ColorRange, EncodeOptions, EncoderTune, QualityPreset, RateControl,
+            VideoEncoder, DEFAULT_GOP_SIZE,
+        },
         error::Result,
     },
     Capture,
@@ -12,6 +15,7 @@ pub struct CaptureBuilder {
     audio_encoder: Option<AudioEncoder>,
     quality_preset: Option<QualityPreset>,
     rate_control: RateControl,
+    encode: EncodeOptions,
     include_cursor: bool,
     include_audio: bool,
     include_mic: bool,
@@ -32,6 +36,7 @@ impl CaptureBuilder {
             audio_encoder: None,
             quality_preset: None,
             rate_control: RateControl::default(),
+            encode: EncodeOptions::default(),
             include_cursor: false,
             include_audio: false,
             include_mic: false,
@@ -93,6 +98,25 @@ impl CaptureBuilder {
         self
     }
 
+    /// Keyframe interval in frames (GOP length). Default: [`DEFAULT_GOP_SIZE`] (30).
+    /// Values below 1 are clamped to 1.
+    pub fn with_gop(mut self, gop_size: u32) -> Self {
+        self.encode.gop_size = gop_size.max(1);
+        self
+    }
+
+    /// NVENC tune bias. Default: [`EncoderTune::Quality`] (`hq`).
+    pub fn with_encoder_tune(mut self, tune: EncoderTune) -> Self {
+        self.encode.tune = tune;
+        self
+    }
+
+    /// Encoded sample value range. Default: [`ColorRange::Limited`].
+    pub fn with_color_range(mut self, range: ColorRange) -> Self {
+        self.encode.color_range = range;
+        self
+    }
+
     /// Optional: Provide a restore token from a previous session to skip the
     /// screen-recording permission prompt. Retrieve the token after a successful
     /// build via [`crate::Capture::restore_token`].
@@ -121,11 +145,42 @@ impl CaptureBuilder {
             audio_encoder,
             quality,
             self.rate_control,
+            self.encode,
             self.include_cursor,
             self.include_audio,
             self.include_mic,
             self.target_fps,
             self.restore_token,
         )
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builder_defaults_use_legacy_encode_options() {
+        let b = CaptureBuilder::new();
+        assert_eq!(b.encode.gop_size, DEFAULT_GOP_SIZE);
+        assert_eq!(b.encode.tune, EncoderTune::Quality);
+        assert_eq!(b.encode.color_range, ColorRange::Limited);
+    }
+
+    #[test]
+    fn builder_setters_override_encode_options() {
+        let b = CaptureBuilder::new()
+            .with_gop(120)
+            .with_encoder_tune(EncoderTune::Performance)
+            .with_color_range(ColorRange::Full);
+        assert_eq!(b.encode.gop_size, 120);
+        assert_eq!(b.encode.tune, EncoderTune::Performance);
+        assert_eq!(b.encode.color_range, ColorRange::Full);
+    }
+
+    #[test]
+    fn with_gop_clamps_zero_to_one() {
+        let b = CaptureBuilder::new().with_gop(0);
+        assert_eq!(b.encode.gop_size, 1);
     }
 }
