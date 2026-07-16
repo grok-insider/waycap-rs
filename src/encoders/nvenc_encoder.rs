@@ -568,7 +568,6 @@ impl NvencEncoder {
         encoder_ctx.set_width(width);
         encoder_ctx.set_height(height);
         encoder_ctx.set_format(ffmpeg::format::Pixel::CUDA);
-        encoder_ctx.set_bit_rate(16_000_000);
 
         unsafe {
             let nvenc_device =
@@ -631,9 +630,33 @@ impl NvencEncoder {
         encoder_ctx.set_time_base(Rational::new(1, TIME_UNIT_NS as i32));
         encoder_ctx.set_gop(encode.gop_size.max(1));
 
-        let encoder_params = ffmpeg::codec::Parameters::new();
+        // NVENC reads the target from AVCodecContext.bit_rate / rc_max_rate —
+        // not from ffmpeg-CLI-style private options like "b:v". Apply these
+        // immediately before open_with so nothing can wipe them (an empty
+        // set_parameters used to zero bit_rate and produce ~1.5 Mbps mush).
+        let target_bps = target_bitrate_bps(quality, rate_control);
+        encoder_ctx.set_bit_rate(target_bps);
+        match rate_control {
+            RateControl::ConstantBitrate { .. } => {
+                encoder_ctx.set_max_bit_rate(target_bps);
+                // 1-second VBV buffer at the target rate (bits, not bytes).
+                unsafe {
+                    (*encoder_ctx.as_mut_ptr()).rc_buffer_size = target_bps as i32;
+                }
+            }
+            RateControl::Quality => {
+                // Cap peaks at the preset ceiling; CQ drives average quality.
+                encoder_ctx.set_max_bit_rate(target_bps);
+            }
+        }
+
         let opts = Self::get_encoder_params(quality, rate_control, encode);
-        encoder_ctx.set_parameters(encoder_params)?;
+        log::info!(
+            "nvenc open encoder={encoder} {}x{} rc={rate_control:?} target_kbps={} preset/tune via private opts",
+            width,
+            height,
+            target_bps / 1000
+        );
         let encoder = encoder_ctx.open_with(opts)?;
         Ok(encoder)
     }
@@ -649,13 +672,10 @@ impl NvencEncoder {
         opts.set("color_range", encode.color_range.as_ffmpeg_color_range());
         match rate_control {
             // Constant bitrate: predictable output rate (what an in-RAM replay
-            // buffer sizes itself against). A 1-second VBV holds bursts to the
-            // target; the quality preset still picks the speed/quality preset.
-            RateControl::ConstantBitrate { kbps } => {
+            // buffer sizes itself against). Bitrate itself is on AVCodecContext;
+            // private opts only select rc mode + speed preset.
+            RateControl::ConstantBitrate { .. } => {
                 opts.set("rc", "cbr");
-                opts.set("b:v", &format!("{kbps}k"));
-                opts.set("maxrate", &format!("{kbps}k"));
-                opts.set("bufsize", &format!("{kbps}k"));
                 let preset = match quality {
                     QualityPreset::Low => "p2",
                     QualityPreset::Medium => "p4",
@@ -669,22 +689,18 @@ impl NvencEncoder {
                     QualityPreset::Low => {
                         opts.set("preset", "p2");
                         opts.set("cq", "30");
-                        opts.set("b:v", "20M");
                     }
                     QualityPreset::Medium => {
                         opts.set("preset", "p4");
                         opts.set("cq", "25");
-                        opts.set("b:v", "40M");
                     }
                     QualityPreset::High => {
                         opts.set("preset", "p7");
                         opts.set("cq", "20");
-                        opts.set("b:v", "80M");
                     }
                     QualityPreset::Ultra => {
                         opts.set("preset", "p7");
                         opts.set("cq", "15");
-                        opts.set("b:v", "120M");
                     }
                 }
             }
@@ -790,5 +806,59 @@ impl Drop for NvencEncoder {
             drop(self.cuda_ext_memory.take());
             drop(self.vulkan_ctx.take());
         }
+    }
+}
+
+/// Target average bitrate in **bits per second** for `AVCodecContext.bit_rate`.
+///
+/// CBR uses the configured kbps; quality mode uses a high ceiling so CQ can
+/// spend bits freely on motion (the historical High preset was 80 Mbps).
+pub(crate) fn target_bitrate_bps(quality: &QualityPreset, rate_control: RateControl) -> usize {
+    match rate_control {
+        RateControl::ConstantBitrate { kbps } => (kbps as usize).saturating_mul(1000),
+        RateControl::Quality => match quality {
+            QualityPreset::Low => 20_000_000,
+            QualityPreset::Medium => 40_000_000,
+            QualityPreset::High => 80_000_000,
+            QualityPreset::Ultra => 120_000_000,
+        },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::config::{QualityPreset, RateControl};
+
+    #[test]
+    fn cbr_target_is_kbps_times_1000() {
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::High, RateControl::ConstantBitrate { kbps: 50_000 }),
+            50_000_000
+        );
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::Low, RateControl::ConstantBitrate { kbps: 12_000 }),
+            12_000_000
+        );
+    }
+
+    #[test]
+    fn quality_preset_ceilings_match_legacy() {
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::Low, RateControl::Quality),
+            20_000_000
+        );
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::Medium, RateControl::Quality),
+            40_000_000
+        );
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::High, RateControl::Quality),
+            80_000_000
+        );
+        assert_eq!(
+            target_bitrate_bps(&QualityPreset::Ultra, RateControl::Quality),
+            120_000_000
+        );
     }
 }
